@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+networkx
+vaderSentiment
+streamlit
+requests
+matplotlib
+pytest
+sqlalchemy
+alembic
+psycopg2-binary
