@@ -3,8 +3,11 @@ import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 import networkx as nx
+import os
 
-API_BASE = st.sidebar.text_input("API base URL", "http://localhost:8000")
+# Get API base URL from environment or use default
+DEFAULT_API_BASE = os.getenv("API_BASE_URL", "http://localhost:8080")
+API_BASE = st.sidebar.text_input("API base URL", DEFAULT_API_BASE)
 
 st.title("Sentiment Analyzer UI")
 

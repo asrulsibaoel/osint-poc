@@ -12,3 +12,4 @@ pytest
 sqlalchemy
 alembic
 psycopg2-binary
+neo4j

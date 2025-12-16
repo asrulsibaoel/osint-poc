@@ -1,7 +1,6 @@
 from typing import List
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import re
-import networkx as nx
 
 from app.schemas.data_ingestion import Post
 from app.schemas.analysis_result import (
@@ -11,9 +10,8 @@ from app.schemas.analysis_result import (
     AnalysisStats,
     AnalysisResponse,
     GraphResponse,
-    GraphNode,
-    GraphEdge,
 )
+from app.services.graph_service import graph_service
 
 # Sentiment analyzer
 _vader = SentimentIntensityAnalyzer()
@@ -28,9 +26,6 @@ try:
         _spacy_nlp = None
 except Exception:
     _spacy_nlp = None
-
-# Ephemeral graph store
-_graph: nx.Graph = nx.Graph()
 
 EMAIL_RE = re.compile(r"[\w\.-]+@[\w\.-]+", re.IGNORECASE)
 PHONE_RE = re.compile(r"\+?\d[\d\-\s]{7,}\d")
@@ -97,33 +92,22 @@ def analyze_posts(posts: List[Post]) -> AnalysisResponse:
     return AnalysisResponse(items=items, stats=stats)
 
 
-def build_knowledge_graph(analysis: AnalysisResponse) -> None:
-    global _graph
-    _graph = nx.Graph()
-    # Add nodes and edges
-    for item in analysis.items:
-        post_node = f"post:{item.post_id}"
-        user_node = f"user:{item.author}"
-        platform_node = f"platform:{item.platform}"
-        _graph.add_node(post_node, label=item.post_id, type="post")
-        _graph.add_node(user_node, label=item.author, type="user")
-        _graph.add_node(platform_node, label=item.platform, type="platform")
-        _graph.add_edge(user_node, post_node, label="POSTED")
-        _graph.add_edge(post_node, platform_node, label="ON")
-        for ent in item.entities:
-            ent_id = f"entity:{ent.label}:{ent.text}"
-            _graph.add_node(ent_id, label=ent.text,
-                            type="entity", entity_label=ent.label)
-            _graph.add_edge(post_node, ent_id, label="MENTIONS")
+def build_knowledge_graph(analysis: AnalysisResponse, clear_existing: bool = True) -> None:
+    """
+    Build knowledge graph from analysis response using Neo4j.
+    
+    Args:
+        analysis: The analysis response containing posts and entities
+        clear_existing: Whether to clear existing graph data first
+    """
+    graph_service.build_knowledge_graph(analysis, clear_existing=clear_existing)
 
 
 def get_graph_response() -> GraphResponse:
-    nodes: List[GraphNode] = []
-    edges: List[GraphEdge] = []
-    for n, data in _graph.nodes(data=True):
-        nodes.append(GraphNode(id=str(n), label=str(
-            data.get("label", n)), type=str(data.get("type", "entity"))))
-    for u, v, data in _graph.edges(data=True):
-        edges.append(GraphEdge(source=str(u), target=str(v),
-                     label=str(data.get("label", ""))))
-    return GraphResponse(nodes=nodes, edges=edges)
+    """
+    Retrieve the entire graph from Neo4j.
+    
+    Returns:
+        GraphResponse containing all nodes and edges
+    """
+    return graph_service.get_graph_response()

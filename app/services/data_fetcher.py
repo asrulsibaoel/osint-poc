@@ -14,6 +14,8 @@ from datetime import datetime
 import requests
 
 from app.schemas.data_ingestion import Post, UserProfile
+from app.core.config import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,7 @@ class LinkedInFetcher(BaseFetcher):
             return None
 
         data = resp.json()
-        
+
         # Fetch email (requires r_emailaddress scope)
         email = None
         email_resp = self._safe_request(
@@ -99,7 +101,8 @@ class LinkedInFetcher(BaseFetcher):
             platform="linkedin",
             user_id=data.get("id", user_id),
             username=None,  # LinkedIn doesn't expose public username via API
-            name=f"{data.get('localizedFirstName', '')} {data.get('localizedLastName', '')}".strip(),
+            name=f"{data.get('localizedFirstName', '')} {data.get('localizedLastName', '')}".strip(
+            ),
             email=email,
             phone=None,
             dob=None,
@@ -116,7 +119,7 @@ class LinkedInFetcher(BaseFetcher):
 
         posts: List[Post] = []
         url = f"{self.BASE_URL}/ugcPosts?q=authors&authors=List(urn:li:person:{user_id})&count={limit}"
-        
+
         resp = self._safe_request("GET", url)
         if not resp:
             return posts
@@ -125,7 +128,8 @@ class LinkedInFetcher(BaseFetcher):
         for item in data.get("elements", []):
             text = ""
             specific_content = item.get("specificContent", {})
-            share_content = specific_content.get("com.linkedin.ugc.ShareContent", {})
+            share_content = specific_content.get(
+                "com.linkedin.ugc.ShareContent", {})
             share_commentary = share_content.get("shareCommentary", {})
             text = share_commentary.get("text", "")
 
@@ -168,7 +172,7 @@ class FacebookFetcher(BaseFetcher):
 
         fields = "id,name,email,birthday,location"
         url = f"{self.BASE_URL}/{user_id}?fields={fields}&access_token={self.access_token}"
-        
+
         resp = self._safe_request("GET", url)
         if not resp:
             return None
@@ -182,7 +186,8 @@ class FacebookFetcher(BaseFetcher):
             email=data.get("email"),
             phone=None,
             dob=data.get("birthday"),
-            location=data.get("location", {}).get("name") if isinstance(data.get("location"), dict) else None,
+            location=data.get("location", {}).get("name") if isinstance(
+                data.get("location"), dict) else None,
         )
 
     def fetch_posts(self, user_id: str, limit: int = 50) -> List[Post]:
@@ -196,7 +201,7 @@ class FacebookFetcher(BaseFetcher):
         posts: List[Post] = []
         fields = "id,message,created_time,permalink_url"
         url = f"{self.BASE_URL}/{user_id}/posts?fields={fields}&limit={limit}&access_token={self.access_token}"
-        
+
         resp = self._safe_request("GET", url)
         if not resp:
             return posts
@@ -222,18 +227,51 @@ class TwitterFetcher(BaseFetcher):
     """
     Twitter/X API v2 fetcher.
     Requires Bearer Token for most endpoints.
-    See: https://developer.twitter.com/en/docs/twitter-api
+    
+    To get a valid bearer token:
+    1. Register at https://developer.twitter.com
+    2. Create a Project and App
+    3. Generate Bearer Token from your app's "Keys and tokens" page
+    
+    See: https://developer.x.com/en/docs/twitter-api
     """
 
-    BASE_URL = "https://api.twitter.com/2"
+    BASE_URL = "https://api.x.com/2"
 
     def __init__(self):
         super().__init__()
-        self.bearer_token = os.getenv("TWITTER_BEARER_TOKEN")
+        self.bearer_token = settings.twitter_bearer_token
         if self.bearer_token:
             self.session.headers.update({
                 "Authorization": f"Bearer {self.bearer_token}"
             })
+
+    def _safe_request(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
+        """Make a safe HTTP request with Twitter-specific error handling."""
+        try:
+            response = self.session.request(method, url, timeout=30, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as e:
+            # Check for common Twitter API errors
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_data = e.response.json()
+                    if error_data.get("reason") == "official-client-forbidden":
+                        logger.error(
+                            "Twitter API Error: The bearer token appears to be from an official "
+                            "Twitter client and cannot be used with the API. Please register your "
+                            "own app at https://developer.twitter.com and generate a new bearer token."
+                        )
+                    elif error_data.get("title"):
+                        logger.error(f"Twitter API Error: {error_data.get('title')} - {error_data.get('detail', '')}")
+                    else:
+                        logger.error(f"Request failed: {e}")
+                except Exception:
+                    logger.error(f"Request failed: {e}")
+            else:
+                logger.error(f"Request failed: {e}")
+            return None
 
     def fetch_user_profile(self, user_id: str) -> Optional[UserProfile]:
         """
@@ -252,7 +290,7 @@ class TwitterFetcher(BaseFetcher):
         params = {
             "user.fields": "id,name,username,location,description,created_at,public_metrics"
         }
-        
+
         resp = self._safe_request("GET", url, params=params)
         if not resp:
             return None
@@ -278,7 +316,7 @@ class TwitterFetcher(BaseFetcher):
             return []
 
         posts: List[Post] = []
-        
+
         # Get user ID if username provided
         if not user_id.isdigit():
             profile = self.fetch_user_profile(user_id)
@@ -292,7 +330,7 @@ class TwitterFetcher(BaseFetcher):
             "max_results": min(limit, 100),
             "tweet.fields": "id,text,created_at,author_id"
         }
-        
+
         resp = self._safe_request("GET", url, params=params)
         if not resp:
             return posts
@@ -306,7 +344,7 @@ class TwitterFetcher(BaseFetcher):
                 author_id=item.get("author_id", user_id),
                 text=item.get("text", ""),
                 timestamp=item.get("created_at"),
-                url=f"https://twitter.com/i/status/{item.get('id', '')}",
+                url=f"https://x.com/i/status/{item.get('id', '')}",
             ))
 
         return posts
@@ -335,7 +373,7 @@ class InstagramFetcher(BaseFetcher):
 
         fields = "id,username,name,biography"
         url = f"{self.BASE_URL}/{user_id}?fields={fields}&access_token={self.access_token}"
-        
+
         resp = self._safe_request("GET", url)
         if not resp:
             return None
@@ -363,7 +401,7 @@ class InstagramFetcher(BaseFetcher):
         posts: List[Post] = []
         fields = "id,caption,timestamp,permalink,username"
         url = f"{self.BASE_URL}/{user_id}/media?fields={fields}&limit={limit}&access_token={self.access_token}"
-        
+
         resp = self._safe_request("GET", url)
         if not resp:
             return posts
@@ -409,7 +447,7 @@ class ThreadsFetcher(BaseFetcher):
 
         fields = "id,username,name,threads_profile_picture_url,threads_biography"
         url = f"{self.BASE_URL}/{user_id}?fields={fields}&access_token={self.access_token}"
-        
+
         resp = self._safe_request("GET", url)
         if not resp:
             return None
@@ -437,7 +475,7 @@ class ThreadsFetcher(BaseFetcher):
         posts: List[Post] = []
         fields = "id,text,timestamp,permalink,username"
         url = f"{self.BASE_URL}/{user_id}/threads?fields={fields}&limit={limit}&access_token={self.access_token}"
-        
+
         resp = self._safe_request("GET", url)
         if not resp:
             return posts
@@ -488,7 +526,7 @@ class TelegramFetcher(BaseFetcher):
         # This works only for users who have interacted with the bot
         url = self._api_url("getChat")
         params = {"chat_id": user_id}
-        
+
         resp = self._safe_request("GET", url, params=params)
         if not resp:
             return None
@@ -502,7 +540,8 @@ class TelegramFetcher(BaseFetcher):
             platform="telegram",
             user_id=str(data.get("id", user_id)),
             username=data.get("username"),
-            name=f"{data.get('first_name', '')} {data.get('last_name', '')}".strip(),
+            name=f"{data.get('first_name', '')} {data.get('last_name', '')}".strip(
+            ),
             email=None,
             phone=None,
             dob=None,
@@ -520,12 +559,13 @@ class TelegramFetcher(BaseFetcher):
             return []
 
         posts: List[Post] = []
-        
+
         # getUpdates only returns recent messages for the bot
         # For full history, you need to use MTProto API (pyrogram/telethon)
         url = self._api_url("getUpdates")
-        params = {"limit": limit, "allowed_updates": ["message", "channel_post"]}
-        
+        params = {"limit": limit, "allowed_updates": [
+            "message", "channel_post"]}
+
         resp = self._safe_request("GET", url, params=params)
         if not resp:
             return posts
@@ -538,7 +578,7 @@ class TelegramFetcher(BaseFetcher):
             message = update.get("message") or update.get("channel_post")
             if not message:
                 continue
-            
+
             # Filter by chat_id if specified
             chat_id = str(message.get("chat", {}).get("id", ""))
             if user_id and chat_id != str(user_id):
@@ -552,10 +592,12 @@ class TelegramFetcher(BaseFetcher):
             posts.append(Post(
                 id=str(message.get("message_id", "")),
                 platform="telegram",
-                author=from_user.get("username") or f"{from_user.get('first_name', '')} {from_user.get('last_name', '')}".strip(),
+                author=from_user.get(
+                    "username") or f"{from_user.get('first_name', '')} {from_user.get('last_name', '')}".strip(),
                 author_id=str(from_user.get("id", "")),
                 text=text,
-                timestamp=datetime.fromtimestamp(message.get("date", 0)).isoformat() if message.get("date") else None,
+                timestamp=datetime.fromtimestamp(message.get(
+                    "date", 0)).isoformat() if message.get("date") else None,
                 url=None,
             ))
 
@@ -567,7 +609,7 @@ class WhatsAppFetcher(BaseFetcher):
     WhatsApp Business API fetcher.
     Requires WhatsApp Business API access through Meta.
     See: https://developers.facebook.com/docs/whatsapp/cloud-api/
-    
+
     Note: WhatsApp API is primarily for sending messages, not fetching history.
     Message history retrieval is limited and requires webhook integration.
     """
@@ -605,7 +647,7 @@ class WhatsAppFetcher(BaseFetcher):
         """
         WhatsApp Cloud API doesn't support fetching message history.
         Messages must be captured via webhooks in real-time.
-        
+
         This is a placeholder - implement webhook handler separately.
         """
         if not self.access_token:
@@ -618,7 +660,7 @@ class WhatsAppFetcher(BaseFetcher):
         # 2. Configure it in Meta Business settings
         # 3. Store incoming messages in your database
         # 4. Query your database here
-        
+
         logger.info(
             "WhatsApp message history requires webhook integration. "
             "See: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/"
@@ -630,11 +672,11 @@ class WhatsAppFetcher(BaseFetcher):
 def get_fetcher(platform: str) -> Optional[BaseFetcher]:
     """
     Factory function to get the appropriate fetcher for a platform.
-    
+
     Args:
         platform: One of 'linkedin', 'facebook', 'twitter', 'instagram', 
                   'threads', 'telegram', 'whatsapp'
-    
+
     Returns:
         Fetcher instance or None if platform is not supported
     """
@@ -647,7 +689,7 @@ def get_fetcher(platform: str) -> Optional[BaseFetcher]:
         "telegram": TelegramFetcher,
         "whatsapp": WhatsAppFetcher,
     }
-    
+
     fetcher_class = fetchers.get(platform.lower())
     if fetcher_class:
         return fetcher_class()
@@ -658,17 +700,17 @@ def get_fetcher(platform: str) -> Optional[BaseFetcher]:
 def fetch_all_posts(user_ids: Dict[str, str], limit: int = 50) -> List[Post]:
     """
     Fetch posts from multiple platforms.
-    
+
     Args:
         user_ids: Dict mapping platform name to user_id
                   e.g., {"twitter": "elonmusk", "facebook": "me"}
         limit: Max posts per platform
-    
+
     Returns:
         Combined list of posts from all platforms
     """
     all_posts: List[Post] = []
-    
+
     for platform, user_id in user_ids.items():
         fetcher = get_fetcher(platform)
         if fetcher:
@@ -678,5 +720,5 @@ def fetch_all_posts(user_ids: Dict[str, str], limit: int = 50) -> List[Post]:
                 logger.info(f"Fetched {len(posts)} posts from {platform}")
             except Exception as e:
                 logger.error(f"Error fetching from {platform}: {e}")
-    
+
     return all_posts
