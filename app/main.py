@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.endpoints.sentiment import router as sentiment_router
 from app.api.v1.endpoints.graph import router as graph_router
+from app.api.v1.endpoints.twitter import router as twitter_router
 from app.services.graph_service import graph_service
 
 
@@ -40,6 +41,7 @@ app.add_middleware(
 
 app.include_router(sentiment_router, prefix="/api/v1")
 app.include_router(graph_router, prefix="/api/v1")
+app.include_router(twitter_router, prefix="/api/v1")
 
 
 @app.get("/health")

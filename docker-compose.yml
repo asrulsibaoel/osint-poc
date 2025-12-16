@@ -7,6 +7,8 @@ services:
     container_name: osint-api
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
       - APP_NAME=Sentiment Analyzer API
       - NEO4J_URI=bolt://neo4j:7687
